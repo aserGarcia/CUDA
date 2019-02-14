@@ -1,11 +1,5 @@
 #include <stdio.h>
 
-const char* boolToTxt(int b){
-    if (b)
-				return "Enabled";
-		return "Disabled";
-}
-
 int main(void){
 		cudaDeviceProp prop;
 
@@ -38,8 +32,8 @@ int main(void){
 				printf("Total Managed Memory: %d\n", prop.managedMemory);
 				printf("Shared Memory Per Block: %lu\n", prop.sharedMemPerBlock);
 				printf("Shared Memory Per MultiProcessor: %lu\n", prop.sharedMemPerMultiprocessor);
-				printf("Device can Map Host Memory: %s\n", boolToTxt(prop.canMapHostMemory));
-				printf("Error Correcting code Mem: %s\n", boolToTxt(prop.ECCEnabled));
+				printf("Device can Map Host Memory: %s\n", prop.canMapHostMemory?"Enabled":"Disabled");
+				printf("Error Correcting code Mem: %s\n", prop.ECCEnabled?"Enabled":"Disabled");
 				printf("Memory Bus Width: %d\n", prop.memoryBusWidth);
 				printf("Memory Pitch: %lu\n\n", prop.memPitch);
 				
@@ -50,7 +44,7 @@ int main(void){
 				printf("MultiProcessor Count: %d\n", prop.multiProcessorCount);
 				printf("Device Overlap: %d\n", prop.deviceOverlap);
 
-				printf("Kernel Execution Timeout: %s\n", boolToTxt(prop.kernelExecTimeoutEnabled));
+				printf("Kernel Execution Timeout: %s\n", prop.kernelExecTimeoutEnabled?"Enabled":"Disabled");
 				printf("Concurrent Kernels: %d\n", prop.concurrentKernels);
 			  				
 	  }
