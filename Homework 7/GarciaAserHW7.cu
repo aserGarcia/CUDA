@@ -1,4 +1,4 @@
-//nvcc GarciaAserHW7.cu -o temp -lm; ./temp (runs)
+//nvcc GarciaAserHW7.cu -o temp -lm; ./temp
 /*
 ----If it is timing out (watchdog) follow steps below----
 1. sudo sublime /etc/X11/xorg.conf
