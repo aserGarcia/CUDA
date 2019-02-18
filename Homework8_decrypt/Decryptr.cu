@@ -99,29 +99,23 @@ void display()
     cudaStreamSynchronize(stream0);
     cudaStreamSynchronize(stream1);
 
-    int c =0;
+
     float tol = 0.001;
     float px;
-    for(int i =0; i < CHUNKSIZE*(CHUNKSIZE*3-2); i+=3){
-        if(result[i]){
-            c++;
-            px = file2[i];
-            printf("%i ~ float_nr=%f, ",c,px);
-            for(int j = 1; j<27; j++){
-                if (abs(px-1.0/float(j))<tol){
-                    printf("1/%d:  %c", j, (char)(j+96));
+    for(int i =0; i < CHUNKSIZE*3; i+=3){
+        for(int j =0; j<CHUNKSIZE*3; j+=3){
+            if(result[i+j*CHUNKSIZE]){
+                px = file2[i+j*CHUNKSIZE];
+                for(int j = 1; j<27; j++){
+                    if (abs(px-1.0/float(j))<tol){
+                        printf("%c", (char)(j+64));
+                    }
+                    
                 }
+                printf(" ");
             }
-            printf("\n");
         }
     }
-/*
-    printf("Total different pixels: %d\n", c);
-
-    for(int i=1; i<27; i++){
-        printf("%c: %f\n", (char)(i+96), 1.0/float(i));
-    }
-*/
 
 	glDrawPixels(WINDOW_SIZE, WINDOW_SIZE, GL_RGB, GL_FLOAT, result);
     glFlush();
