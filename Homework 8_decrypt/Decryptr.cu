@@ -1,4 +1,12 @@
 //nvcc GarciaAserHW8.cu -o temp -lglut -lm -lGLU -lGL
+
+/*------------------------------------
+		TO DO
+1. dev_r to float3 to increase speed
+2. Global vars -> #define
+3. Redo lines 118 to 131
+------------------------------------*/
+
 #include <GL/glut.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,16 +16,19 @@ int BLOCKSIZE = 265;
 int WINDOW_SIZE = 1024;
 int FULL_DATA_SIZE = WINDOW_SIZE*WINDOW_SIZE*3; //each pixel has three floats
 
+/*-------------------------------------------
+		KERNEL
+-------------------------------------------*/
 __global__ void kernel(float *a, float *b, float *r){
 
     int idx = threadIdx.x + blockIdx.x*blockDim.x;
     int offset = idx*3;
+//Checking pixel difference between files
     if(idx < CHUNKSIZE){
         if (a[offset+0] != b[offset+0] || a[offset+1] != b[offset+1] || a[offset+2] != b[offset+2]){
             r[offset+0] = 1.0;
             r[offset+1] = 1.0;
             r[offset+2] = 1.0;
-            //printf("%d\n", idx);
         }
         else{
             r[offset+0] = 0.0;
@@ -27,9 +38,12 @@ __global__ void kernel(float *a, float *b, float *r){
     }
 }
 
+/*-------------------------------------------
+	DISPLAY TO SCREEN
+-------------------------------------------*/
 void display()
 {
-//*********READING FILE************
+//*********   READING FILE   ***********
     float *file1, *file2;
     FILE *bitmapFile;
     
@@ -43,7 +57,7 @@ void display()
 
     fclose(bitmapFile);
 
-//*********   KERNEL   ***********
+//*********   KERNEL CALL   ***********
     cudaStream_t stream0, stream1;
     cudaStreamCreate(&stream0);
     cudaStreamCreate(&stream1);
