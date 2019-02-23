@@ -196,6 +196,39 @@ void n_body()
 
 void control()
 {	
+/*
+   void getNumberOfGPUs()
+    {
+        cudaGetDeviceCount(&NumberOfGpus);
+        printf("\n***** You have %d GPUs available\n", NumberOfGpus);
+        errorCheck("cudaGetDeviceCount");
+    }
+
+    void checkPeerToPeerAccess()
+    {	
+        if(1 < NumberOfGpus && UseMultipleGPU == 1)
+        {
+            cudaDeviceCanAccessPeer(&Gpu0Access,0,1);
+            errorCheck("cudaDeviceCanAccessPeer0");
+            cudaDeviceCanAccessPeer(&Gpu1Access,1,0);
+            errorCheck("cudaDeviceCanAccessPeer1");
+
+            printf("\n***** You will be using %d GPUs\n", NumberOfGpus);
+
+            if(Gpu0Access == 0)
+            {
+                printf("\nTSU Error: Device0 can not do peer to peer\n");
+            }
+
+            if(Gpu1Access == 0)
+            {
+                printf("\nTSU Error: Device1 can not do peer to peer\n");
+            }
+            cudaDeviceEnablePeerAccess(1,0);
+            errorCheck("cudaDeviceEnablePeerAccess");
+        }
+    }
+    */
 	set_initial_conditions();
 	draw_picture();
     n_body();
