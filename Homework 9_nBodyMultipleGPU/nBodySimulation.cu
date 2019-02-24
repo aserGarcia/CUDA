@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <cuda.h>
+#include "../cudaErrCheck.cuh"
 
 #define N 32768
 #define BLOCK 256
@@ -40,7 +41,7 @@ void set_initial_conditions()
     float initial_seperation;
 
 	particles_per_side = (int)(pow((float)N,1.0/3.0) + 0.99999);
-	printf("\n cube root of N = %d \n", particles_per_side);
+	printf("\n Particles per side: cube root of N = %d \n", particles_per_side);
     position_start = -(particles_per_side -1.0)/2.0;
 	initial_seperation = 2.0;
 		
@@ -62,9 +63,9 @@ void set_initial_conditions()
 
     memset(v, 0.0, N*sizeof(v[0]));
     
-	cudaMalloc( (void**)&p_GPU, N *sizeof(float4) );
-	cudaMalloc( (void**)&v_GPU, N *sizeof(float3) );
-	cudaMalloc( (void**)&f_GPU, N *sizeof(float3) );
+	ERROR_CHECK(cudaMalloc( (void**)&p_GPU, N *sizeof(float4) ));
+	ERROR_CHECK(cudaMalloc( (void**)&v_GPU, N *sizeof(float3) ));
+	ERROR_CHECK(cudaMalloc( (void**)&f_GPU, N *sizeof(float3) ));
 }
 
 void draw_picture()
@@ -85,7 +86,7 @@ void draw_picture()
 	
 	glutSwapBuffers();
 }
-                                 
+
 __device__ float3 getBodyBodyForce(float4 p0, float4 p1)
 {
     float3 f;
@@ -159,16 +160,36 @@ void n_body()
 	int   tdraw = 0; 
 	float time = 0.0;
 	float elapsedTime;
-	
+	int nr_gpu, gpu0_access, gpu1_access;
+	int use_multi_gpu = 1;
+//Get number of GPUs
+	ERROR_CHECK(cudaGetDeviceCount(&nr_gpu));
+	printf("\n***** You have %d GPU(s) available *****\n", nr_gpu);
+
+//check P2P access
+	if(1 < nr_gpu && use_multi_gpu)
+	{
+		ERROR_CHECK(cudaDeviceCanAccessPeer(&gpu0_access,0,1));
+		ERROR_CHECK(cudaDeviceCanAccessPeer(&gpu1_access,1,0));
+		printf("\n***** You will be using %d GPU(s) *****\n", nr_gpu);
+		if(!gpu0_access)
+			printf("\nTSU Error: Device0 can not do peer to peer\n");
+		
+		if(!gpu1_access)
+			printf("\nTSU Error: Device1 can not do peer to peer\n");
+		
+		ERROR_CHECK(cudaDeviceEnablePeerAccess(1,0));
+	}
+
 	cudaEvent_t start, stop;
-	cudaEventCreate(&start);
-	cudaEventCreate(&stop);
-	cudaEventRecord(start, 0);
+	ERROR_CHECK(cudaEventCreate(&start));
+	ERROR_CHECK(cudaEventCreate(&stop));
+	ERROR_CHECK(cudaEventRecord(start, 0));
 	
 	dt = DT;
 	
-    cudaMemcpy( p_GPU, p, N *sizeof(float4), cudaMemcpyHostToDevice );
-    cudaMemcpy( v_GPU, v, N *sizeof(float3), cudaMemcpyHostToDevice );
+    ERROR_CHECK(cudaMemcpy( p_GPU, p, N *sizeof(float4), cudaMemcpyHostToDevice ));
+    ERROR_CHECK(cudaMemcpy( v_GPU, v, N *sizeof(float3), cudaMemcpyHostToDevice ));
     
 	while(time < STOP_TIME)
 	{	
@@ -178,7 +199,7 @@ void n_body()
 		//To kill the draw comment out the next 7 lines.
 		if(tdraw == DRAW) 
 		{
-		    cudaMemcpy( p, p_GPU, N *sizeof(float4), cudaMemcpyDeviceToHost );
+		    ERROR_CHECK(cudaMemcpy( p, p_GPU, N *sizeof(float4), cudaMemcpyDeviceToHost ));
 			draw_picture();
 			tdraw = 0;
 		}
@@ -187,48 +208,15 @@ void n_body()
 		time += dt;
 	}
 	
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&elapsedTime, start, stop);
+	ERROR_CHECK(cudaEventRecord(stop, 0));
+	ERROR_CHECK(cudaEventSynchronize(stop));
+	ERROR_CHECK(cudaEventElapsedTime(&elapsedTime, start, stop));
 	printf("\n\nGPU time = %3.1f milliseconds\n", elapsedTime);
-	cudaMemcpy( p, p_GPU, N *sizeof(float4), cudaMemcpyDeviceToHost );
+	ERROR_CHECK(cudaMemcpy( p, p_GPU, N *sizeof(float4), cudaMemcpyDeviceToHost ));
 }
 
 void control()
 {	
-/*
-   void getNumberOfGPUs()
-    {
-        cudaGetDeviceCount(&NumberOfGpus);
-        printf("\n***** You have %d GPUs available\n", NumberOfGpus);
-        errorCheck("cudaGetDeviceCount");
-    }
-
-    void checkPeerToPeerAccess()
-    {	
-        if(1 < NumberOfGpus && UseMultipleGPU == 1)
-        {
-            cudaDeviceCanAccessPeer(&Gpu0Access,0,1);
-            errorCheck("cudaDeviceCanAccessPeer0");
-            cudaDeviceCanAccessPeer(&Gpu1Access,1,0);
-            errorCheck("cudaDeviceCanAccessPeer1");
-
-            printf("\n***** You will be using %d GPUs\n", NumberOfGpus);
-
-            if(Gpu0Access == 0)
-            {
-                printf("\nTSU Error: Device0 can not do peer to peer\n");
-            }
-
-            if(Gpu1Access == 0)
-            {
-                printf("\nTSU Error: Device1 can not do peer to peer\n");
-            }
-            cudaDeviceEnablePeerAccess(1,0);
-            errorCheck("cudaDeviceEnablePeerAccess");
-        }
-    }
-    */
 	set_initial_conditions();
 	draw_picture();
     n_body();
