@@ -1,5 +1,10 @@
 #include <stdio.h>
 
+/*-----------------------------
+        Cuda Error Check
+    Throws error on cuda function
+    call
+-----------------------------*/
 static void ErrorCheck( cudaError_t err, const char *file, int line )
 {
     if(err != cudaSuccess)
