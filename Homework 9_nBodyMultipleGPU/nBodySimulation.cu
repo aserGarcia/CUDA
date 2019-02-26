@@ -2,11 +2,12 @@
 // nvcc nBodySimulation.cu -o nBody -lglut -lm -lGLU -lGL; ./nBody
 //To stop hit "control c" in the window you launched it from.
 #include <GL/glut.h>
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <cuda.h>
 #include "../cudaErrCheck.cuh"
+#include "nBodyHeader.cuh" //std,cuda,errcheck headers in it as well
 
 #define N 32768
 #define BLOCK 256
@@ -34,6 +35,14 @@ float3 *v_GPU, *f_GPU;
 FILE *data_file, *data_file1, *data_file2;
 dim3 block(BLOCK), grid((N-1)/block.x + 1);
 
+struct Device{
+    int devID;
+    int size;
+    float4 *pos;
+    float3 *vel;
+    float3 *forces;
+};
+
 void set_initial_conditions()
 {
 	int i,j,k,num,particles_per_side;
@@ -45,6 +54,11 @@ void set_initial_conditions()
     position_start = -(particles_per_side -1.0)/2.0;
 	initial_seperation = 2.0;
 		
+	/*---------------------------
+	|		Creates walls		|
+	|		of Spheres size		|
+	|		cube_root(N)		|
+	---------------------------*/
 	num = 0;
 	for(i=0; i<particles_per_side; i++)
 	{
@@ -70,13 +84,11 @@ void set_initial_conditions()
 
 void draw_picture()
 {
-	int i;
-	
 	glClear(GL_COLOR_BUFFER_BIT);
 	glClear(GL_DEPTH_BUFFER_BIT);
 	
 	glColor3d(1.0,1.0,0.5);
-	for(i=0; i<N; i++)
+	for(int i=0; i<N; i++)
 	{
 		glPushMatrix();
 		glTranslatef(p[i].x, p[i].y, p[i].z);
@@ -87,6 +99,11 @@ void draw_picture()
 	glutSwapBuffers();
 }
 
+/*--------------------------------
+|	Takes the distances,		 |
+|	masses, and graviational,	 |
+|	constants to calculate force |
+--------------------------------*/
 __device__ float3 getBodyBodyForce(float4 p0, float4 p1)
 {
     float3 f;
@@ -154,33 +171,21 @@ __global__ void moveBodies(float4 *pos, float3 *vel, float3 * force)
     }
 }
 
-void n_body()
+void* n_body(void *pvoidDev)
 {
+    Device *dev = (Device*)pvoidDev;
+    ERROR_CHECK(cudaSetDevice(dev->devID));
+
+    int size = dev->size;
+
 	float dt;
 	int   tdraw = 0; 
 	float time = 0.0;
 	float elapsedTime;
-	int nr_gpu, gpu0_access, gpu1_access;
-	int use_multi_gpu = 1;
-//Get number of GPUs
-	ERROR_CHECK(cudaGetDeviceCount(&nr_gpu));
-	printf("\n***** You have %d GPU(s) available *****\n", nr_gpu);
 
-//check P2P access
-	if(1 < nr_gpu && use_multi_gpu)
-	{
-		ERROR_CHECK(cudaDeviceCanAccessPeer(&gpu0_access,0,1));
-		ERROR_CHECK(cudaDeviceCanAccessPeer(&gpu1_access,1,0));
-		printf("\n***** You will be using %d GPU(s) *****\n", nr_gpu);
-		if(!gpu0_access)
-			printf("\nTSU Error: Device0 can not do peer to peer\n");
-		
-		if(!gpu1_access)
-			printf("\nTSU Error: Device1 can not do peer to peer\n");
-		
-		ERROR_CHECK(cudaDeviceEnablePeerAccess(1,0));
-	}
-
+	/*---------------------------
+	|		Time Stamp			|
+	---------------------------*/
 	cudaEvent_t start, stop;
 	ERROR_CHECK(cudaEventCreate(&start));
 	ERROR_CHECK(cudaEventCreate(&stop));
@@ -188,9 +193,12 @@ void n_body()
 	
 	dt = DT;
 	
-    ERROR_CHECK(cudaMemcpy( p_GPU, p, N *sizeof(float4), cudaMemcpyHostToDevice ));
-    ERROR_CHECK(cudaMemcpy( v_GPU, v, N *sizeof(float3), cudaMemcpyHostToDevice ));
-    
+    ERROR_CHECK(cudaMemcpy( p_GPU, p, size*sizeof(float4), cudaMemcpyHostToDevice ));
+    ERROR_CHECK(cudaMemcpy( v_GPU, v, size*sizeof(float3), cudaMemcpyHostToDevice ));
+	
+	/*---------------------------
+	|		Main Body Moves		|
+	---------------------------*/
 	while(time < STOP_TIME)
 	{	
 		getForces<<<grid, block>>>(p_GPU, v_GPU, f_GPU);
@@ -215,10 +223,37 @@ void n_body()
 	ERROR_CHECK(cudaMemcpy( p, p_GPU, N *sizeof(float4), cudaMemcpyDeviceToHost ));
 }
 
+/*------------------------------
+|	Executes the Simulation	   |
+------------------------------*/
 void control()
 {	
+	int nr_gpu, gpu0_access, gpu1_access;
+	int use_multi_gpu = 1;
+
+	ERROR_CHECK(cudaGetDeviceCount(&nr_gpu));
+	printf("\n***** You have %d GPU(s) available *****\n", nr_gpu);
+
+	/*---------------------------
+	|		GPU nr Decision		|
+	---------------------------*/
+	if(1 < nr_gpu && use_multi_gpu)
+	{
+		ERROR_CHECK(cudaDeviceCanAccessPeer(&gpu0_access,0,1));
+		ERROR_CHECK(cudaDeviceCanAccessPeer(&gpu1_access,1,0));
+		printf("\n***** You will be using %d GPU(s) *****\n", nr_gpu);
+		if(!gpu0_access)
+			printf("\nTSU Error: Device0 can not do peer to peer\n");
+		
+		if(!gpu1_access)
+			printf("\nTSU Error: Device1 can not do peer to peer\n");
+		
+		ERROR_CHECK(cudaDeviceEnablePeerAccess(1,0));
+	}
+
 	set_initial_conditions();
 	draw_picture();
+	//run the routine
     n_body();
     draw_picture();
 	
@@ -226,6 +261,9 @@ void control()
 	while(1);
 }
 
+/*------------------------------
+|	Making the Picture GL	   |
+------------------------------*/
 void Display(void)
 {
 	gluLookAt(EYE, EYE, EYE, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0);
