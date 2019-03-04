@@ -30,7 +30,14 @@
 float4 *p;
 float3 *v, *f;
 float4 *p_GPU0, *p_GPU1;
-float rot=0.0;
+float rot=0.0; //to rotate cheerios
+
+/*------------------------------------
+|
+|	DataStruct is to work on each GPU
+|	
+------------------------------------*/
+
 struct DataStruct {
 	int deviceID;
 	int size;
@@ -42,7 +49,6 @@ struct DataStruct {
 
 void set_initial_conditions()
 {
-
 	p = (float4*)malloc(N*sizeof(float4));
 	v = (float3*)malloc(N*sizeof(float3));
 	f = (float3*)malloc(N*sizeof(float3));
@@ -87,8 +93,8 @@ void draw_picture()
 	
 	glClear(GL_COLOR_BUFFER_BIT);
 	glClear(GL_DEPTH_BUFFER_BIT);
-	0.9955,0.8622,0.6711
 	//gray white (powdered donut)
+	//0.9955,0.8622,0.6711
 	glColor3d(0.87,0.87,0.87);
 	for(i=0; i<N; i++)
 	{
