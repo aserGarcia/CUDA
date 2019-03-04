@@ -2,14 +2,13 @@
 // nvcc nBodySimulation.cu -o nBody -lglut -lm -lGLU -lGL; ./nBody
 //To stop hit "control c" in the window you launched it from.
 #include <GL/glut.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <math.h>
 #include <cuda.h>
 #include "../cudaErrCheck.cuh"
-#include "nBodyHeader.cuh" //std,cuda,errcheck headers in it as well
 
-#define N 32768
+#define N 8*8*8
 #define BLOCK 256
 
 #define XWindowSize 2500
@@ -24,41 +23,43 @@
 #define G 1.0
 #define H 1.0
 
-#define EYE 45.0
+#define EYE 10.0
 #define FAR 90.0
 
 // Globals
-float4 p[N];
-float3 v[N], f[N];
-float4 *p_GPU;
-float3 *v_GPU, *f_GPU;
-FILE *data_file, *data_file1, *data_file2;
-dim3 block(BLOCK), grid((N-1)/block.x + 1);
-
-struct Device{
-    int devID;
-    int size;
-    float4 *pos;
-    float3 *vel;
-    float3 *forces;
+float4 *p;
+float3 *v, *f;
+float4 *p_GPU0, *p_GPU1;
+float rot=0.0;
+struct DataStruct {
+	int deviceID;
+	int size;
+	int offset;
+	float4 *pos;
+	float3 *vel;
+	float3 *force;
 };
 
 void set_initial_conditions()
 {
-	int i,j,k,num,particles_per_side;
-    float position_start;
-    float initial_seperation;
 
-	particles_per_side = (int)(pow((float)N,1.0/3.0) + 0.99999);
-	printf("\n Particles per side: cube root of N = %d \n", particles_per_side);
+	p = (float4*)malloc(N*sizeof(float4));
+	v = (float3*)malloc(N*sizeof(float3));
+	f = (float3*)malloc(N*sizeof(float3));
+
+	int i,j,k,num,particles_per_side;
+    float position_start, temp;
+    float initail_seperation;
+
+	temp = pow((float)N,1.0/3.0) + 0.99999;
+	particles_per_side = temp;
+	printf("\n cube root of N = %d \n", particles_per_side);
     position_start = -(particles_per_side -1.0)/2.0;
-	initial_seperation = 2.0;
-		
-	/*---------------------------
-	|		Creates walls		|
-	|		of Spheres size		|
-	|		cube_root(N)		|
-	---------------------------*/
+	initail_seperation = 2.0;
+	for(i=0; i<N; i++)
+	{
+		p[i].w = 1.0;
+	}
 	num = 0;
 	for(i=0; i<particles_per_side; i++)
 	{
@@ -67,43 +68,42 @@ void set_initial_conditions()
 			for(k=0; k<particles_per_side; k++)
 			{
 			    if(N <= num) break;
-                p[num++] = make_float4(position_start + i*initial_seperation,
-                                    position_start + j*initial_seperation,
-                                    position_start + k*initial_seperation,
-                                    1.0);
+				p[num].x = position_start + i*initail_seperation;
+				p[num].y = position_start + j*initail_seperation;
+				p[num].z = position_start + k*initail_seperation;
+				v[num].x = 0.0;
+				v[num].y = 0.0;
+				v[num].z = 0.0;
+				num++;
+				
 			}
 		}
-    }
-
-    memset(v, 0.0, N*sizeof(v[0]));
-    
-	ERROR_CHECK(cudaMalloc( (void**)&p_GPU, N *sizeof(float4) ));
-	ERROR_CHECK(cudaMalloc( (void**)&v_GPU, N *sizeof(float3) ));
-	ERROR_CHECK(cudaMalloc( (void**)&f_GPU, N *sizeof(float3) ));
+	}	
 }
 
 void draw_picture()
 {
+	int i;
+	
 	glClear(GL_COLOR_BUFFER_BIT);
 	glClear(GL_DEPTH_BUFFER_BIT);
-	
-	glColor3d(1.0,1.0,0.5);
-	for(int i=0; i<N; i++)
+	0.9955,0.8622,0.6711
+	//gray white (powdered donut)
+	glColor3d(0.87,0.87,0.87);
+	for(i=0; i<N; i++)
 	{
 		glPushMatrix();
 		glTranslatef(p[i].x, p[i].y, p[i].z);
-		glutSolidSphere(0.1,20,20);
+		//make some cheerios 
+		glRotatef(rot*i,p[i].x, p[i].y, p[i].z);
+		glutSolidTorus(0.04,0.08,15,15);
 		glPopMatrix();
 	}
+	rot+=0.1;
 	
 	glutSwapBuffers();
 }
-
-/*--------------------------------
-|	Takes the distances,		 |
-|	masses, and graviational,	 |
-|	constants to calculate force |
---------------------------------*/
+                                 
 __device__ float3 getBodyBodyForce(float4 p0, float4 p1)
 {
     float3 f;
@@ -115,12 +115,14 @@ __device__ float3 getBodyBodyForce(float4 p0, float4 p1)
     
     float force  = (G*p0.w*p1.w)/(r2) - (H*p0.w*p1.w)/(r2*r2);
     
-    f = make_float3(force*dx/r, force*dy/r, force*dz/r);
+    f.x = force*dx/r;
+    f.y = force*dy/r;
+    f.z = force*dz/r;
     
     return(f);
 }
 
-__global__ void getForces(float4 *pos, float3 *vel, float3 * force)
+__global__ void getForces(float4 *g_pos, float3 * force, int offset)
 {
 	int j,ii;
     float3 force_mag, forceSum;
@@ -128,86 +130,145 @@ __global__ void getForces(float4 *pos, float3 *vel, float3 * force)
     __shared__ float4 shPos[BLOCK];
     int id = threadIdx.x + blockDim.x*blockIdx.x;
     
-    forceSum = make_float3(0.0, 0.0, 0.0);
+    forceSum.x = 0.0;
+	forceSum.y = 0.0;
+	forceSum.z = 0.0;
 		
-	posMe = pos[id];
+	posMe.x = g_pos[id+offset].x;
+	posMe.y = g_pos[id+offset].y;
+	posMe.z = g_pos[id+offset].z;
+	posMe.w = g_pos[id+offset].w;
 	    
-    for(j=0; j < gridDim.x; j++)
+    for(j=0; j < gridDim.x*2; j++)
     {
-    	shPos[threadIdx.x] = pos[threadIdx.x + blockDim.x*j];
+    	shPos[threadIdx.x] = g_pos[threadIdx.x + blockDim.x*j];
     	__syncthreads();
    
 		#pragma unroll 32
         for(int i=0; i < blockDim.x; i++)	
         {
         	ii = i + blockDim.x*j;
-		    if(ii != id && ii < N) 
+		    if(ii != id+offset && ii < N) 
 		    {
-                force_mag = getBodyBodyForce(posMe, shPos[i]);
-                forceSum.x += force_mag.x;
+		    	force_mag = getBodyBodyForce(posMe, shPos[i]);
+			    forceSum.x += force_mag.x;
 			    forceSum.y += force_mag.y;
 			    forceSum.z += force_mag.z;
 		    }
-	   	 }
+	   	}
 	}
 	if(id <N)
 	{
-	    force[id] = make_float3(forceSum.x, forceSum.y, forceSum.z);
+	    force[id].x = forceSum.x;
+	    force[id].y = forceSum.y;
+	    force[id].z = forceSum.z;
     }
 }
 
-__global__ void moveBodies(float4 *pos, float3 *vel, float3 * force)
+__global__ void moveBodies(float4 *g_pos, float4 *d_pos, float3 *vel, float3 * force, int offset)
 {
     int id = threadIdx.x + blockDim.x*blockIdx.x;
     if(id < N)
     {
-	    vel[id].x += ((force[id].x-DAMP*vel[id].x)/pos[id].w)*DT;
-	    vel[id].y += ((force[id].y-DAMP*vel[id].y)/pos[id].w)*DT;
-	    vel[id].z += ((force[id].z-DAMP*vel[id].z)/pos[id].w)*DT;
+	    vel[id].x += ((force[id].x-DAMP*vel[id].x)/d_pos[id].w)*DT;
+	    vel[id].y += ((force[id].y-DAMP*vel[id].y)/d_pos[id].w)*DT;
+	    vel[id].z += ((force[id].z-DAMP*vel[id].z)/d_pos[id].w)*DT;
 	
-	    pos[id].x += vel[id].x*DT;
-	    pos[id].y += vel[id].y*DT;
-	    pos[id].z += vel[id].z*DT;
+		d_pos[id].x += vel[id].x*DT;
+	    d_pos[id].y += vel[id].y*DT;
+		d_pos[id].z += vel[id].z*DT;
+		
+		g_pos[id+offset].x = d_pos[id].x;
+		g_pos[id+offset].y = d_pos[id].y;
+		g_pos[id+offset].z = d_pos[id].z;
     }
 }
 
-void* n_body(void *pvoidDev)
+void n_body()
 {
-    Device *dev = (Device*)pvoidDev;
-    ERROR_CHECK(cudaSetDevice(dev->devID));
+	int deviceCount;
+	ERROR_CHECK( cudaGetDeviceCount ( &deviceCount ) );
+	p_GPU0 = (float4*)malloc(N*sizeof(float4));
+	p_GPU1 = (float4*)malloc(N*sizeof(float4));
 
-    int size = dev->size;
 
+
+	DataStruct* dev = (DataStruct*)malloc(deviceCount*sizeof(DataStruct));
+	
+	for(int i = 0; i<deviceCount; i++)
+	{
+		cudaSetDevice(i);
+		if(i==0)
+		{
+			ERROR_CHECK( cudaMalloc(&p_GPU0, N*sizeof(float4)) );
+			ERROR_CHECK( cudaMemcpy(p_GPU0, p, N*sizeof(float4), cudaMemcpyHostToDevice) );
+		}
+		if(i==1)
+		{
+			ERROR_CHECK( cudaMalloc(&p_GPU1, N*sizeof(float4)) );
+			ERROR_CHECK( cudaMemcpy(p_GPU1, p, N*sizeof(float4), cudaMemcpyHostToDevice) );
+		}
+
+
+
+		dev[i].deviceID = i;
+		dev[i].size = N/deviceCount;
+		dev[i].offset = i*N/deviceCount;
+		ERROR_CHECK( cudaMalloc(&dev[i].pos, dev[i].size * sizeof(float4)) );
+		ERROR_CHECK( cudaMalloc(&dev[i].vel, dev[i].size * sizeof(float3)) );
+		ERROR_CHECK( cudaMalloc(&dev[i].force, dev[i].size * sizeof(float3)) );
+
+		ERROR_CHECK( cudaMemcpy(dev[i].pos, p+dev[i].offset, dev[i].size * sizeof(float4), cudaMemcpyHostToDevice) );
+		ERROR_CHECK( cudaMemcpy(dev[i].vel, v+dev[i].offset, dev[i].size * sizeof(float3), cudaMemcpyHostToDevice) );
+		ERROR_CHECK( cudaMemcpy(dev[i].force, f+dev[i].offset, dev[i].size * sizeof(float3), cudaMemcpyHostToDevice) );
+	}
+
+	dim3 block(BLOCK);
+	dim3 grid((N/deviceCount - 1)/BLOCK + 1);
+	
 	float dt;
 	int   tdraw = 0; 
 	float time = 0.0;
 	float elapsedTime;
-
-	/*---------------------------
-	|		Time Stamp			|
-	---------------------------*/
+	
 	cudaEvent_t start, stop;
-	ERROR_CHECK(cudaEventCreate(&start));
-	ERROR_CHECK(cudaEventCreate(&stop));
-	ERROR_CHECK(cudaEventRecord(start, 0));
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
+	cudaEventRecord(start, 0);
 	
 	dt = DT;
-	
-    ERROR_CHECK(cudaMemcpy( p_GPU, p, size*sizeof(float4), cudaMemcpyHostToDevice ));
-    ERROR_CHECK(cudaMemcpy( v_GPU, v, size*sizeof(float3), cudaMemcpyHostToDevice ));
-	
-	/*---------------------------
-	|		Main Body Moves		|
-	---------------------------*/
+    
 	while(time < STOP_TIME)
 	{	
-		getForces<<<grid, block>>>(p_GPU, v_GPU, f_GPU);
-		moveBodies<<<grid, block>>>(p_GPU, v_GPU, f_GPU);
-        	
+		for(int i = 0; i < deviceCount; i++)
+		{
+			float4 *temp;
+			temp = i?p_GPU1:p_GPU0;
+			cudaSetDevice( dev[i].deviceID );
+			getForces<<<grid, block>>>(temp, dev[i].force, dev[i].offset);
+			ERROR_CHECK( cudaPeekAtLastError() );
+			moveBodies<<<grid, block>>>(temp, dev[i].pos, dev[i].vel, dev[i].force, dev[i].offset);
+			ERROR_CHECK( cudaPeekAtLastError() );
+		}
+
+		cudaDeviceSynchronize();
+
+		if(deviceCount > 1)
+		{
+			cudaSetDevice( 0 );
+			ERROR_CHECK( cudaMemcpy(p_GPU1+dev[0].offset, dev[0].pos, dev[1].size*sizeof(float4), cudaMemcpyDeviceToDevice) );
+			cudaSetDevice( 1 );
+			ERROR_CHECK( cudaMemcpy(p_GPU0+dev[1].offset, dev[1].pos, dev[0].size*sizeof(float4), cudaMemcpyDeviceToDevice) );
+		}
+
+		cudaDeviceSynchronize();
+
+
 		//To kill the draw comment out the next 7 lines.
 		if(tdraw == DRAW) 
 		{
-		    ERROR_CHECK(cudaMemcpy( p, p_GPU, N *sizeof(float4), cudaMemcpyDeviceToHost ));
+			cudaSetDevice(0);
+			ERROR_CHECK( cudaMemcpy(p, p_GPU0, N * sizeof(float4), cudaMemcpyDeviceToHost) );
 			draw_picture();
 			tdraw = 0;
 		}
@@ -216,54 +277,21 @@ void* n_body(void *pvoidDev)
 		time += dt;
 	}
 	
-	ERROR_CHECK(cudaEventRecord(stop, 0));
-	ERROR_CHECK(cudaEventSynchronize(stop));
-	ERROR_CHECK(cudaEventElapsedTime(&elapsedTime, start, stop));
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&elapsedTime, start, stop);
 	printf("\n\nGPU time = %3.1f milliseconds\n", elapsedTime);
-	ERROR_CHECK(cudaMemcpy( p, p_GPU, N *sizeof(float4), cudaMemcpyDeviceToHost ));
 }
 
-/*------------------------------
-|	Executes the Simulation	   |
-------------------------------*/
 void control()
 {	
-	int nr_gpu, gpu0_access, gpu1_access;
-	int use_multi_gpu = 1;
-
-	ERROR_CHECK(cudaGetDeviceCount(&nr_gpu));
-	printf("\n***** You have %d GPU(s) available *****\n", nr_gpu);
-
-	/*---------------------------
-	|		GPU nr Decision		|
-	---------------------------*/
-	if(1 < nr_gpu && use_multi_gpu)
-	{
-		ERROR_CHECK(cudaDeviceCanAccessPeer(&gpu0_access,0,1));
-		ERROR_CHECK(cudaDeviceCanAccessPeer(&gpu1_access,1,0));
-		printf("\n***** You will be using %d GPU(s) *****\n", nr_gpu);
-		if(!gpu0_access)
-			printf("\nTSU Error: Device0 can not do peer to peer\n");
-		
-		if(!gpu1_access)
-			printf("\nTSU Error: Device1 can not do peer to peer\n");
-		
-		ERROR_CHECK(cudaDeviceEnablePeerAccess(1,0));
-	}
-
 	set_initial_conditions();
 	draw_picture();
-	//run the routine
     n_body();
-    draw_picture();
 	
 	printf("\n DONE \n");
-	while(1);
 }
 
-/*------------------------------
-|	Making the Picture GL	   |
-------------------------------*/
 void Display(void)
 {
 	gluLookAt(EYE, EYE, EYE, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0);
